@@ -261,7 +261,7 @@ function Index() {
                 {m.disturbanceTypes[0].count})
               </p>
               <div className="space-y-2">
-                {m.disturbanceTypes.map((t) => (
+                {m.disturbanceTypes.map((t: { key: string; count: number }) => (
                   <div key={t.key} className="flex items-center gap-3">
                     <span className="w-36 shrink-0 font-mono text-xs text-muted-foreground">{t.key.replace(/_/g, " ")}</span>
                     <div className="h-4 flex-1 rounded-sm bg-muted">
