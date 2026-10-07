@@ -252,6 +252,31 @@ function Index() {
             </div>
           )}
 
+          {m && m.disturbanceTypes.length > 0 && (
+            <div className="rounded-sm border border-border bg-card p-4">
+              <h3 className="font-display text-lg font-bold">What's disturbing the squirrels</h3>
+              <p className="mb-3 font-mono text-[11px] text-muted-foreground">
+                disturbance notes by cause, as labeled by Mistral · biggest cause:{" "}
+                <span className="text-accent">{m.disturbanceTypes[0].key.replace(/_/g, " ")}</span> (
+                {m.disturbanceTypes[0].count})
+              </p>
+              <div className="space-y-2">
+                {m.disturbanceTypes.map((t) => (
+                  <div key={t.key} className="flex items-center gap-3">
+                    <span className="w-36 shrink-0 font-mono text-xs text-muted-foreground">{t.key.replace(/_/g, " ")}</span>
+                    <div className="h-4 flex-1 rounded-sm bg-muted">
+                      <div
+                        className="h-4 rounded-sm bg-primary"
+                        style={{ width: `${Math.max(2, (t.count / m.disturbanceTypes[0].count) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="w-10 shrink-0 text-right font-mono text-xs">{t.count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {m && (
             <div className="grid gap-4 md:grid-cols-2">
               <div className="rounded-sm border border-border bg-card p-4">
