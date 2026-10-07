@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useRef, useState } from "react";
 import { SpeakButton } from "@/components/SpeakButton";
+import { NoteSketch } from "@/components/NoteSketch";
 import { ChonkMap, metricValue, type Metric } from "@/components/ChonkMap";
 import {
   classifyBatch,
@@ -350,6 +351,12 @@ function Index() {
                     {n.ai?.one_liner && <p className="font-display text-sm font-bold">{n.ai.one_liner}</p>}
                     <p className="text-sm">{n.text}</p>
                     <SpeakButton text={n.ai?.one_liner ? `${n.ai.one_liner}. ${n.text}` : n.text} className="text-muted-foreground" />
+                    {(n.ai?.primary_label === "incident" || n.ai?.primary_label === "cross_species_incident") && (
+                      <NoteSketch
+                        note={n.text}
+                        label={`${n.ai.primary_label}${n.ai.incident_type ? `/${n.ai.incident_type}` : ""}`}
+                      />
+                    )}
                     {n.ai?.evidence && (
                       <p className="mt-1 font-mono text-[11px] text-muted-foreground">
                         evidence: “{n.ai.evidence}” {n.ai.evidence_verified ? "✓ verbatim" : "⚠ not found in note"}
