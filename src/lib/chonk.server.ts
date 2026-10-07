@@ -147,11 +147,11 @@ function clean(s?: string) {
   return t.length ? t : undefined;
 }
 
-function pointInRing(x: number, y: number, ring: number[][]) {
+function pointInRing(x: number, y: number, ring: [number, number][]) {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
+    const [xi, yi] = ring[i]!;
+    const [xj, yj] = ring[j]!;
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
@@ -175,7 +175,7 @@ export async function ingestAll() {
   // Label grid polygons by majority hectare of squirrels inside them
   // (the grid dataset ships no hectare code).
   const polys = grid.map((g) => {
-    const ring: number[][] = g.the_geom.coordinates[0][0];
+    const ring: [number, number][] = g.the_geom.coordinates[0][0];
     const cx = ring.slice(0, -1).reduce((a, p) => a + p[0], 0) / (ring.length - 1);
     const cy = ring.slice(0, -1).reduce((a, p) => a + p[1], 0) / (ring.length - 1);
     return { id: String(g.id), ring, cx, cy, votes: new Map<string, number>() };

@@ -139,7 +139,7 @@ export const getMapData = createServerFn({ method: "GET" }).handler(async () => 
   const polygons = (hect.json.hits.hits as any[]).map((h) => ({
     id: h._id as string,
     hectare: (h._source.hectare ?? null) as string | null,
-    ring: h._source.polygon as number[][],
+    ring: h._source.polygon as [number, number][],
   }));
   const pinList: Pin[] = (pins.json.hits?.hits ?? []).map((h: any) => ({
     id: h._id,

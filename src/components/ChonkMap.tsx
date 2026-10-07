@@ -3,7 +3,7 @@ import type { HectareStat, Pin } from "@/lib/chonk.functions";
 
 export type Metric = "disturbance_rate" | "incidents" | "observations";
 
-type Poly = { id: string; hectare: string | null; ring: number[][] };
+type Poly = { id: string; hectare: string | null; ring: [number, number][] };
 
 const ANGLE = (-61 * Math.PI) / 180; // rotate the park so its long axis runs horizontally
 const LAT0 = 40.7825;
