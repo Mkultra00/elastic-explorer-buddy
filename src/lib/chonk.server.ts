@@ -1,11 +1,20 @@
 // Server-only helpers for CHONK RADAR: Socrata, Elasticsearch, Mistral.
 import { createHash } from "crypto";
 
+export type Dataset = "census" | "inaturalist";
+
 export const IDX = {
   obs: "chonk_observations",
   stories: "chonk_stories",
   hectares: "chonk_hectares",
 } as const;
+
+// Per-dataset index names. The hectare grid is shared; iNaturalist has no stories index.
+export function idxFor(d: Dataset): { obs: string; stories: string | null; hectares: string } {
+  return d === "census"
+    ? { obs: IDX.obs, stories: IDX.stories, hectares: IDX.hectares }
+    : { obs: "chonk_inat_observations", stories: null, hectares: IDX.hectares };
+}
 
 export const PROMPT_VERSION = "v1";
 export const CLASSIFY_MODEL = "mistral-small-latest";
@@ -114,17 +123,45 @@ const MAPPINGS: Record<string, unknown> = {
       polygon: { type: "object", enabled: false },
     },
   },
+  chonk_inat_observations: {
+    dynamic: "strict",
+    properties: {
+      inat_id: { type: "keyword" },
+      hectare: { type: "keyword" },
+      obs_date: { type: "date", format: "strict_date" },
+      location: { type: "geo_point" },
+      species: { type: "keyword" },
+      quality_grade: { type: "keyword" },
+      uri: { type: "keyword" },
+      note_text: { type: "text" },
+      has_note: { type: "boolean" },
+      ai: AI_MAPPING,
+    },
+  },
 };
 
-export async function ensureIndices(reset: boolean) {
+export async function ensureIndices(reset: boolean, dataset: Dataset = "census") {
+  // The hectare grid is shared: only the census reset may wipe it.
+  const names =
+    dataset === "census"
+      ? [IDX.obs, IDX.stories, IDX.hectares]
+      : ["chonk_inat_observations"];
   const out: Record<string, string> = {};
-  for (const [name, mappings] of Object.entries(MAPPINGS)) {
+  for (const name of names) {
+    const mappings = MAPPINGS[name];
     const exists = await es(`/${name}`, { method: "HEAD" });
     if (exists.status === 200 && reset) await esOk(`/${name}`, { method: "DELETE" });
     if (exists.status !== 200 || reset) {
       await esOk(`/${name}`, { method: "PUT", body: JSON.stringify({ mappings }) });
       out[name] = "created";
     } else out[name] = "exists";
+  }
+  if (dataset === "inaturalist") {
+    const hect = await es(`/${IDX.hectares}`, { method: "HEAD" });
+    if (hect.status !== 200) {
+      await esOk(`/${IDX.hectares}`, { method: "PUT", body: JSON.stringify({ mappings: MAPPINGS[IDX.hectares] }) });
+      out[IDX.hectares] = "created";
+    }
   }
   return out;
 }
@@ -266,6 +303,97 @@ export async function ingestAll() {
     stories: stories.length,
     hectarePolygons: grid.length,
   };
+}
+
+/* ---------------- iNaturalist ingest ---------------- */
+
+// Eastern Gray Squirrel (46017) + Fox Squirrel (46020) in the Central Park bounding box.
+const INAT_URL =
+  "https://api.inaturalist.org/v1/observations?taxon_id=46017,46020" +
+  "&swlat=40.764&swlng=-73.982&nelat=40.800&nelng=-73.948" +
+  "&per_page=200&order=asc&order_by=id";
+
+export async function ingestInat(maxPages = 10) {
+  // Grid polygons + existing hectare labels (from the census load, if present).
+  const grid = await socrata("qad5-y26n");
+  const labelRes = await es(`/${IDX.hectares}/_search`, {
+    method: "POST",
+    body: JSON.stringify({ size: 1000, _source: ["grid_id", "hectare"] }),
+  });
+  const labelByGrid = new Map<string, string>();
+  for (const h of labelRes.json?.hits?.hits ?? []) {
+    if (h._source?.hectare) labelByGrid.set(String(h._source.grid_id), h._source.hectare);
+  }
+  const polys = grid.map((g) => {
+    const ring: [number, number][] = g.the_geom.coordinates[0][0];
+    return { id: String(g.id), ring, hectare: labelByGrid.get(String(g.id)) };
+  });
+
+  const obs: any[] = [];
+  let idAbove = 0;
+  for (let page = 0; page < maxPages; page++) {
+    const res = await fetch(`${INAT_URL}&id_above=${idAbove}`);
+    if (!res.ok) throw new Error(`iNaturalist returned ${res.status}`);
+    const json = (await res.json()) as { results: any[] };
+    if (!json.results.length) break;
+    obs.push(...json.results);
+    idAbove = json.results[json.results.length - 1].id;
+    if (json.results.length < 200) break;
+  }
+  if (!obs.length) throw new Error("iNaturalist returned no observations");
+
+  // Geo sanity check: first observation must sit inside Central Park.
+  const [lat0 = 0, lon0 = 0] = String(obs[0].location ?? "").split(",").map(Number);
+  if (!(Math.abs(lon0 + 73.97) < 0.1 && Math.abs(lat0 - 40.78) < 0.1)) {
+    throw new Error(`Geo sanity check failed: lat=${lat0}, lon=${lon0}`);
+  }
+
+  // If the shared grid is empty (census never loaded), label polygons by
+  // majority vote of the iNat points and write the hectare docs ourselves.
+  if (!labelByGrid.size) {
+    // Without census labels we cannot recover "14D"-style hectare codes from
+    // iNat alone, so fall back to the grid id as the hectare label.
+    const hectareDocs: unknown[] = [];
+    for (const p of polys) {
+      const ring = p.ring;
+      const cx = ring.slice(0, -1).reduce((a, q) => a + q[0], 0) / (ring.length - 1);
+      const cy = ring.slice(0, -1).reduce((a, q) => a + q[1], 0) / (ring.length - 1);
+      p.hectare = p.id;
+      hectareDocs.push({ index: { _index: IDX.hectares, _id: p.id } });
+      hectareDocs.push({ hectare: p.id, grid_id: p.id, centroid: { lat: cy, lon: cx }, polygon: ring });
+    }
+    for (let i = 0; i < hectareDocs.length; i += 2000) await bulk(hectareDocs.slice(i, i + 2000));
+  }
+
+  const hectareOf = (lat: number, lon: number) => {
+    const p = polys.find((p) => pointInRing(lon, lat, p.ring));
+    return p?.hectare;
+  };
+
+  const docs: unknown[] = [];
+  let withNotes = 0;
+  for (const o of obs) {
+    const [lat, lon] = String(o.location ?? "").split(",").map(Number);
+    if (!lat || !lon) continue;
+    const hectare = hectareOf(lat, lon);
+    const note = clean(o.description);
+    if (note) withNotes++;
+    docs.push({ index: { _index: "chonk_inat_observations", _id: String(o.id) } });
+    docs.push({
+      inat_id: String(o.id),
+      hectare,
+      obs_date: clean(o.observed_on),
+      location: { lat, lon },
+      species: clean(o.taxon?.name),
+      quality_grade: clean(o.quality_grade),
+      uri: clean(o.uri),
+      note_text: note,
+      has_note: !!note,
+    });
+  }
+  for (let i = 0; i < docs.length; i += 2000) await bulk(docs.slice(i, i + 2000));
+
+  return { observations: docs.length / 2, observationsWithNotes: withNotes, stories: 0, hectarePolygons: polys.length };
 }
 
 /* ---------------- Mistral classification ---------------- */

@@ -47,12 +47,19 @@ function Index() {
   const briefingFn = useServerFn(generateBriefing);
   const [briefing, setBriefing] = useState<{ script: string; display: string } | null>(null);
   const [briefingBusy, setBriefingBusy] = useState(false);
+  const [dataset, setDataset] = useState<"census" | "inaturalist">("census");
+
+  function switchDataset(d: "census" | "inaturalist") {
+    setDataset(d);
+    setSelected(null);
+    setBriefing(null);
+  }
 
   async function makeBriefing() {
     setBriefingBusy(true);
     setError(null);
     try {
-      setBriefing(await briefingFn());
+      setBriefing(await briefingFn({ data: { dataset } }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -60,12 +67,12 @@ function Index() {
     }
   }
 
-  const progress = useQuery({ queryKey: ["progress"], queryFn: () => progressFn(), retry: false });
-  const map = useQuery({ queryKey: ["map"], queryFn: () => mapFn(), retry: false });
+  const progress = useQuery({ queryKey: ["progress", dataset], queryFn: () => progressFn({ data: { dataset } }), retry: false });
+  const map = useQuery({ queryKey: ["map", dataset], queryFn: () => mapFn({ data: { dataset } }), retry: false });
   const [selected, setSelected] = useState<string | null>(null);
   const hectare = useQuery({
-    queryKey: ["hectare", selected],
-    queryFn: () => hectareFn({ data: { hectare: selected! } }),
+    queryKey: ["hectare", dataset, selected],
+    queryFn: () => hectareFn({ data: { hectare: selected!, dataset } }),
     enabled: !!selected,
   });
   const fixtures = useQuery({ queryKey: ["fixtures"], queryFn: () => fixturesFn(), enabled: false });
@@ -79,8 +86,8 @@ function Index() {
     setError(null);
     setBusy("Pulling NYC Open Data and indexing into Elastic…");
     try {
-      await setupFn({ data: { reset: true } });
-      await Promise.all([qc.invalidateQueries({ queryKey: ["progress"] }), qc.invalidateQueries({ queryKey: ["map"] })]);
+      await setupFn({ data: { reset: true, dataset } });
+      await Promise.all([qc.invalidateQueries({ queryKey: ["progress", dataset] }), qc.invalidateQueries({ queryKey: ["map", dataset] })]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -95,7 +102,7 @@ function Index() {
     let backoff = 2000;
     try {
       for (let i = 0; i < 200 && !stopRef.current; i++) {
-        const r = await classifyFn({ data: { size: 25 } });
+        const r = await classifyFn({ data: { size: 25, dataset } });
         if (r.done) break;
         if (r.retryAfter) {
           setBusy(`Rate limited by Mistral, waiting ${Math.round(backoff / 1000)}s…`);
@@ -105,11 +112,11 @@ function Index() {
         }
         backoff = 2000;
         setBusy("Mistral is reading field notes…");
-        await qc.invalidateQueries({ queryKey: ["progress"] });
-        if (i % 4 === 3) qc.invalidateQueries({ queryKey: ["map"] });
+        await qc.invalidateQueries({ queryKey: ["progress", dataset] });
+        if (i % 4 === 3) qc.invalidateQueries({ queryKey: ["map", dataset] });
       }
-      await Promise.all([qc.invalidateQueries({ queryKey: ["progress"] }), qc.invalidateQueries({ queryKey: ["map"] })]);
-      fixtures.refetch();
+      await Promise.all([qc.invalidateQueries({ queryKey: ["progress", dataset] }), qc.invalidateQueries({ queryKey: ["map", dataset] })]);
+      if (dataset === "census") fixtures.refetch();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -136,15 +143,33 @@ function Index() {
         <div className="mx-auto flex max-w-7xl flex-wrap items-end justify-between gap-4 px-6 py-6">
           <div>
             <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              Field report · Central Park · Oct 2018
+              Field report · Central Park · {dataset === "census" ? "Oct 2018" : "iNaturalist, all years"}
             </p>
             <h1 className="font-display text-5xl font-black tracking-tight">
               CHONK <span className="text-accent">RADAR</span>
             </h1>
             <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-              Mistral reads every census note and labels it as an incident or a disturbance. Elasticsearch adds them up
-              per hectare. It's a demo of the method, not proof of an outbreak.
+              Mistral reads every {dataset === "census" ? "census note" : "observer note"} and labels it as an incident
+              or a disturbance. Elasticsearch adds them up per hectare. It's a demo of the method, not proof of an
+              outbreak.
             </p>
+            <div className="mt-3 flex gap-1 font-mono text-xs">
+              {(
+                [
+                  ["census", "2018 Squirrel Census"],
+                  ["inaturalist", "iNaturalist (live)"],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => switchDataset(k)}
+                  disabled={!!busy}
+                  className={`rounded-sm px-2.5 py-1.5 ${dataset === k ? "bg-foreground text-background" : "bg-secondary text-secondary-foreground"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
             <button
@@ -297,20 +322,30 @@ function Index() {
                 </ol>
               </div>
               <div className="rounded-sm border border-border bg-card p-4">
-                <h3 className="font-display text-lg font-bold">Fixtures</h3>
-                <p className="mb-2 font-mono text-[11px] text-muted-foreground">the 3 confirmed incidents must be labeled as incidents</p>
-                <button onClick={() => fixtures.refetch()} className="mb-2 font-mono text-xs underline">
-                  {fixtures.isFetching ? "Running…" : "Run fixtures"}
-                </button>
-                <ul className="space-y-2 font-mono text-xs">
-                  {fixtures.data?.map((f) => (
-                    <li key={f.hectare}>
-                      <span className={f.pass ? "text-primary" : "text-destructive"}>{f.pass ? "PASS" : "FAIL"}</span>{" "}
-                      {f.hectare} → {f.label}
-                      <p className="truncate text-muted-foreground">{f.note}</p>
-                    </li>
-                  ))}
-                </ul>
+                <h3 className="font-display text-lg font-bold">{dataset === "census" ? "Fixtures" : "About this dataset"}</h3>
+                {dataset === "census" ? (
+                  <>
+                    <p className="mb-2 font-mono text-[11px] text-muted-foreground">the 3 confirmed incidents must be labeled as incidents</p>
+                    <button onClick={() => fixtures.refetch()} className="mb-2 font-mono text-xs underline">
+                      {fixtures.isFetching ? "Running…" : "Run fixtures"}
+                    </button>
+                    <ul className="space-y-2 font-mono text-xs">
+                      {fixtures.data?.map((f) => (
+                        <li key={f.hectare}>
+                          <span className={f.pass ? "text-primary" : "text-destructive"}>{f.pass ? "PASS" : "FAIL"}</span>{" "}
+                          {f.hectare} → {f.label}
+                          <p className="truncate text-muted-foreground">{f.note}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                    Live from the iNaturalist API: crowd-sourced squirrel sightings in Central Park, all years. Most
+                    have no written note, so only observations with a description get classified. Hectares are assigned
+                    by point-in-polygon against the 2018 census grid. No curated fixtures for this one.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -350,6 +385,11 @@ function Index() {
                     </div>
                     {n.ai?.one_liner && <p className="font-display text-sm font-bold">{n.ai.one_liner}</p>}
                     <p className="text-sm">{n.text}</p>
+                    {n.uri && (
+                      <a href={n.uri} target="_blank" rel="noreferrer" className="font-mono text-[10px] text-accent underline">
+                        view on iNaturalist ↗
+                      </a>
+                    )}
                     <SpeakButton text={n.ai?.one_liner ? `${n.ai.one_liner}. ${n.text}` : n.text} className="text-muted-foreground" />
                     {(n.ai?.primary_label === "incident" || n.ai?.primary_label === "cross_species_incident") && (
                       <NoteSketch
