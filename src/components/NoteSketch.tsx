@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { makeImagePrompt } from "@/lib/chonk.functions";
 import { streamImage } from "@/lib/stream-image";
+import { Button } from "@/components/ui/button";
+import { Palette } from "lucide-react";
 
 type Props = { note: string; label: string };
 
@@ -31,9 +33,9 @@ export function NoteSketch({ note, label }: Props) {
 
   if (state === "idle") {
     return (
-      <button onClick={draw} className="mt-1 font-mono text-[11px] text-accent underline">
-        🎨 Sketch this incident
-      </button>
+      <Button variant="link" onClick={draw} className="mt-1 h-auto px-0 py-0 font-mono text-[11px] text-accent underline">
+        <Palette aria-hidden="true" /> Sketch this observation
+      </Button>
     );
   }
 
@@ -42,7 +44,7 @@ export function NoteSketch({ note, label }: Props) {
       {img && (
         <img
           src={img}
-          alt="Mistral's sketch of the incident"
+          alt="Illustration based on this observation"
           className={`w-full rounded-sm border border-border transition-[filter] ${final ? "blur-0" : "blur-2xl"}`}
         />
       )}
@@ -51,9 +53,9 @@ export function NoteSketch({ note, label }: Props) {
       {state === "error" && (
         <p className="font-mono text-[11px] text-destructive">
           Sketch failed: {err}{" "}
-          <button onClick={draw} className="underline">
+          <Button variant="link" onClick={draw} className="h-auto px-0 py-0 text-[11px] text-destructive underline">
             retry
-          </button>
+          </Button>
         </p>
       )}
     </div>
