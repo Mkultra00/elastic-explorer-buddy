@@ -220,3 +220,73 @@ export const runFixtures = createServerFn({ method: "GET" }).handler(async () =>
     }),
   );
 });
+
+// Overall briefing: Elastic aggregates + top notes -> Mistral writes a sarcastic field briefing.
+export const generateBriefing = createServerFn({ method: "POST" }).handler(async () => {
+  const { es, IDX } = await import("./chonk.server");
+  const idx = `${IDX.stories},${IDX.obs}`;
+  const [aggs, incidents, weird] = await Promise.all([
+    es(`/${idx}/_search`, {
+      method: "POST",
+      body: JSON.stringify({
+        size: 0,
+        aggs: {
+          labels: { terms: { field: "ai.primary_label", size: 10 } },
+          inc: { terms: { field: "ai.incident_type", size: 10 } },
+          dist: { terms: { field: "ai.disturbance_type", size: 10 } },
+          hot: {
+            filter: { term: { "ai.primary_label": "disturbance" } },
+            aggs: { h: { terms: { field: "hectare", size: 5 } } },
+          },
+        },
+      }),
+    }),
+    es(`/${idx}/_search`, {
+      method: "POST",
+      body: JSON.stringify({
+        size: 8,
+        _source: ["hectare", "ai.incident_type", "ai.evidence"],
+        query: { bool: { filter: [{ term: { "ai.primary_label": "incident" } }], must_not: [{ term: { "ai.incident_type": "human_feeding" } }] } },
+        sort: [{ "ai.confidence": "desc" }],
+      }),
+    }),
+    es(`/${idx}/_search`, {
+      method: "POST",
+      body: JSON.stringify({ size: 6, _source: ["hectare", "note", "note_text", "ai.one_liner"], sort: [{ "ai.weird_score": "desc" }] }),
+    }),
+  ]);
+  if (!aggs.ok) throw new Error("No data in Elastic yet. Load and classify first.");
+  const b = (a: any) => (a?.buckets ?? []).map((x: any) => `${x.key}: ${x.doc_count}`).join(", ");
+  const a = aggs.json.aggregations;
+  const facts = [
+    `Dataset: 2018 Central Park Squirrel Census, ~2 weeks in October, 3,023 observations + 809 stories.`,
+    `Label counts: ${b(a.labels)}`,
+    `Incident types: ${b(a.inc)}`,
+    `Disturbance types: ${b(a.dist)}`,
+    `Most disturbed hectares (raw count): ${b(a.hot.h)}`,
+    `Notable incidents: ${(incidents.json.hits?.hits ?? []).map((h: any) => `${h._source.hectare} ${h._source.ai?.incident_type}: "${h._source.ai?.evidence}"`).join("; ")}`,
+    `Weirdest notes: ${(weird.json.hits?.hits ?? []).map((h: any) => `${h._source.hectare}: ${(h._source.note ?? h._source.note_text ?? "").slice(0, 160)}`).join(" || ")}`,
+  ].join("\n");
+
+  const key = process.env["MISTRAL_API_KEY"];
+  if (!key) throw new Error("Mistral is not configured");
+  const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "mistral-large-latest",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a deeply unimpressed, sarcastic park intelligence analyst giving a spoken 60-second situation briefing about Central Park squirrels. Use ONLY the facts given; quote real numbers. Be funny and dry, but honest: say clearly that n is tiny and nothing here proves an outbreak. Structure: opening line, headline numbers, the top disturbance, the real incidents, one absurd highlight, a deadpan sign-off. About 150-180 words, plain spoken prose, no markdown, no lists. Sprinkle 3-5 ElevenLabs audio tags inline such as [sighs], [sarcastic], [deadpan], [chuckles], [dramatic pause].",
+        },
+        { role: "user", content: facts },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`Mistral ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const json = (await res.json()) as { choices: { message: { content: string } }[] };
+  const script = (json.choices[0]?.message.content ?? "").replace(/[*_#]/g, "").trim();
+  return { script, display: script.replace(/\[[^\]]+\]\s*/g, "").trim() };
+});
