@@ -350,6 +350,34 @@ export async function classifyNotes(items: { id: string; text: string }[]) {
   return parsed.results ?? [];
 }
 
+export async function imagePromptForNote(note: string, label: string) {
+  const key = process.env["MISTRAL_API_KEY"];
+  if (!key) throw new Error("Mistral is not configured");
+  const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "mistral-large-latest",
+      temperature: 0.7,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You turn a Central Park field note into one vivid image-generation prompt. " +
+            "Output ONE sentence only, no preamble. Style: dramatic wildlife-documentary illustration, autumn light, Central Park. " +
+            "Stay faithful to the note — do not invent injuries, blood, or gore; a dead squirrel is lying still, not graphic. " +
+            "No text or words in the image.",
+        },
+        { role: "user", content: `Label: ${label}\nField note: ${note}` },
+      ],
+    }),
+  });
+  if (res.status === 429) throw new RateLimited(Number(res.headers.get("retry-after") ?? 3));
+  if (!res.ok) throw new Error(`Mistral ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const json = (await res.json()) as { choices: { message: { content: string } }[] };
+  return (json.choices[0]?.message.content ?? "").trim();
+}
+
 export function buildAi(r: any, sourceText: string) {
   const evidence = String(r.evidence ?? "");
   return {
