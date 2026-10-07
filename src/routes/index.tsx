@@ -2,9 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useRef, useState } from "react";
+import { SpeakButton } from "@/components/SpeakButton";
 import { ChonkMap, metricValue, type Metric } from "@/components/ChonkMap";
 import {
   classifyBatch,
+  generateBriefing,
   getHectare,
   getMapData,
   getProgress,
@@ -41,6 +43,21 @@ function Index() {
   const mapFn = useServerFn(getMapData);
   const hectareFn = useServerFn(getHectare);
   const fixturesFn = useServerFn(runFixtures);
+  const briefingFn = useServerFn(generateBriefing);
+  const [briefing, setBriefing] = useState<{ script: string; display: string } | null>(null);
+  const [briefingBusy, setBriefingBusy] = useState(false);
+
+  async function makeBriefing() {
+    setBriefingBusy(true);
+    setError(null);
+    try {
+      setBriefing(await briefingFn());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBriefingBusy(false);
+    }
+  }
 
   const progress = useQuery({ queryKey: ["progress"], queryFn: () => progressFn(), retry: false });
   const map = useQuery({ queryKey: ["map"], queryFn: () => mapFn(), retry: false });
@@ -200,6 +217,26 @@ function Index() {
             )}
           </div>
 
+          {m && (
+            <div className="rounded-sm border border-foreground bg-card p-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="font-display text-2xl font-black">Situation briefing</h3>
+                <div className="flex gap-3">
+                  <button onClick={makeBriefing} disabled={briefingBusy} className="font-mono text-[11px] underline disabled:opacity-50">
+                    {briefingBusy ? "Mistral is rolling its eyes…" : briefing ? "Regenerate" : "Write briefing"}
+                  </button>
+                  {briefing && <SpeakButton key={briefing.script} text={briefing.script} label="▶ Hear it (sarcastic)" className="text-accent" />}
+                </div>
+              </div>
+              <p className="mb-2 font-mono text-[11px] text-muted-foreground">Mistral writes it from the Elastic totals, ElevenLabs reads it out</p>
+              {briefing ? (
+                <p className="text-sm leading-relaxed">{briefing.display}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">One minute of park intelligence, delivered by someone who would rather be anywhere else.</p>
+              )}
+            </div>
+          )}
+
           {totals && (
             <div className="grid grid-cols-3 gap-3">
               {[
@@ -260,6 +297,14 @@ function Index() {
             <>
               <div className="mb-3 flex items-baseline justify-between">
                 <h2 className="font-display text-3xl font-black">{selected}</h2>
+                {hectare.data && hectare.data.length > 0 && (
+                  <SpeakButton
+                    key={selected}
+                    text={`Hectare ${selected}. ` + hectare.data.slice(0, 6).map((n) => n.text).join(" ... ")}
+                    label="▶ Read all"
+                    className="text-accent"
+                  />
+                )}
                 <span className="font-mono text-xs text-muted-foreground">n = {hectare.data?.length ?? "…"} notes</span>
               </div>
               {hectare.isLoading && <p className="font-mono text-xs">Loading…</p>}
@@ -279,6 +324,7 @@ function Index() {
                     </div>
                     {n.ai?.one_liner && <p className="font-display text-sm font-bold">{n.ai.one_liner}</p>}
                     <p className="text-sm">{n.text}</p>
+                    <SpeakButton text={n.ai?.one_liner ? `${n.ai.one_liner}. ${n.text}` : n.text} className="text-muted-foreground" />
                     {n.ai?.evidence && (
                       <p className="mt-1 font-mono text-[11px] text-muted-foreground">
                         evidence: “{n.ai.evidence}” {n.ai.evidence_verified ? "✓ verbatim" : "⚠ not found in note"}
