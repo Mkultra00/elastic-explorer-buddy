@@ -287,6 +287,6 @@ export const generateBriefing = createServerFn({ method: "POST" }).handler(async
   });
   if (!res.ok) throw new Error(`Mistral ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const json = (await res.json()) as { choices: { message: { content: string } }[] };
-  const script = (json.choices[0]?.message.content ?? "").trim();
+  const script = (json.choices[0]?.message.content ?? "").replace(/[*_#]/g, "").trim();
   return { script, display: script.replace(/\[[^\]]+\]\s*/g, "").trim() };
 });
