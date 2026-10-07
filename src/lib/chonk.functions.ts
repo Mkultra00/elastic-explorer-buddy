@@ -191,6 +191,14 @@ export const getHectare = createServerFn({ method: "GET" })
     return [...map(stories.json.hits?.hits ?? [], "story"), ...map(obs.json.hits?.hits ?? [], "observation")];
   });
 
+// Mistral turns a field note into a one-sentence image prompt for the sketch feature.
+export const makeImagePrompt = createServerFn({ method: "POST" })
+  .inputValidator((d) => z.object({ note: z.string().max(2000), label: z.string().max(60) }).parse(d))
+  .handler(async ({ data }) => {
+    const { imagePromptForNote } = await import("./chonk.server");
+    return { prompt: await imagePromptForNote(data.note, data.label) };
+  });
+
 // Fixtures: the three confirmed incidents in the observation data must be labeled "incident".
 export const runFixtures = createServerFn({ method: "GET" }).handler(async () => {
   const { es, IDX } = await import("./chonk.server");
